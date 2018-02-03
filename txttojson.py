@@ -5,7 +5,7 @@ if len(sys.argv) != 4:
 	exit(0);
 with open(sys.argv[1], "r") as infile:
 	indata = infile.read()
-dat = {"Records": [{
+dat = {"records": [{
 	"text": indata,
 	"title": sys.argv[2],
 	"id": sys.argv[2]
