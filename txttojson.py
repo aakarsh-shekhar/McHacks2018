@@ -1,6 +1,6 @@
 import json
 import sys
-if len(sys.argv) != 3:
+if len(sys.argv) != 4:
 	print("usage: python3 txttojson.py <infile.txt> <title> <outfile.json>")
 	exit(0);
 with open(sys.argv[1], "r", encoding="utf-8") as infile:
