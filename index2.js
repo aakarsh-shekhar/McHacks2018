@@ -17,7 +17,7 @@ function openAMediaStream() {
 	window.mediaStream = elem.captureStream? elem.captureStream() : elem.mozCaptureStream();
 }
 
-function overriddenPlay(audioElem) {
+function overridePlay(destination) {
 	// Checking the next speech item to handle
 	var speechItem = this._waitingQueue[0];
 	if (!speechItem) {
@@ -30,11 +30,30 @@ function overriddenPlay(audioElem) {
 		}, 100);
 		return;
 	}
-	audioElem.src = URL.createObjectURL(new Blob([speechItem.data]));
-	audioElem.play();
-	// todo: what if we have a few backed up
-    this._waitingQueue.splice(0, 1);
-    this._waitingQueueIndex.splice(0, 1);
+	// If it's ready to be decoded & played
+	if (!this._playing) {
+		this._playing = true;
+		this._tools.audioContext.decodeAudioData(speechItem.data, (buffer) => {
+			var source = this._tools.audioContext.createBufferSource();
+			source.buffer = buffer;
+			source.connect(destination);
+			source.start(0);
+			source.onended = (evt) => {
+				this._playing = false;
+				this._waitingQueue.splice(0, 1);
+				this._waitingQueueIndex.splice(0, 1);
+				if (speechItem.callback) {
+					speechItem.callback();
+				}
+				if (this._waitingQueue.length > 0) {
+					this._play();
+				}
+				else {
+					this._nbWaitingItems = 0;
+				}
+			};
+		});
+	}
 }
 
 async function callHandler(call) {
@@ -49,11 +68,9 @@ async function callHandler(call) {
 	let bingClient = new BingSpeech.RecognitionClient(BING_API_KEY);
 	let bingTTS = new BingSpeech.TTSClient(BING_API_KEY);
 
-	var audioElem = document.createElement("audio");
-	document.body.appendChild(audioElem);
-	audioElem.src = "Silence.ogg";
-	audioElem.play();
-	bingTTS._play = overriddenPlay.bind(bingTTS, audioElem);
+	let audioContext = bingTTS._tools.audioContext;
+	let mediaStreamDestination = audioContext.createMediaStreamDestination();
+	bingTTS._play = overridePlay.bind(bingTTS, mediaStreamDestination);
 
 	var audioElemRem = document.createElement("audio");
 	document.body.appendChild(audioElemRem);
@@ -61,7 +78,7 @@ async function callHandler(call) {
 	bingClient.onFinalResponseReceived = async (text) => {
 		console.log(text);
 		let nuanceReply = await getNuanceReplyForText(text);
-		let response = bestAnswer(nuanceReply);
+		let response = nuanceReply.answers.length == 0? "Can you repeat that?" : bestAnswer(nuanceReply);
 		bingTTS.synthesize(response, "en-us");
 	};
 
@@ -83,27 +100,19 @@ async function callHandler(call) {
 	});
 
 	call.on("disconnected", () => {
-		audioElem.remove();
 		audioElemRem.remove();
 		if (bingClient._vad) bingClient._vad.dispose();
 	});
-	var hasInit = false;
-	audioElem.addEventListener("canplay", async function() {
-		if (!hasInit) {
-			hasInit = true;
-			let mediaStream = audioElem.captureStream();
-			console.log("Answering the call; stream " + mediaStream);
-			await call.answer({constraints: {video: false, audio: true},
-				localMediaStream: mediaStream});
-			//call.localMediaStream = mediaStream;
-			console.log("Start receiving audio");
-			await call.startReceivingAudio();
-			console.log("Start sending audio");
-			await call.startSendingAudio();
-			console.log("connection should be up");
-		}
-	});
-
+	let mediaStream = mediaStreamDestination.stream;
+	console.log("Answering the call; stream " + mediaStream);
+	await call.answer({constraints: {video: false, audio: true},
+		localMediaStream: mediaStream});
+	//call.localMediaStream = mediaStream;
+	console.log("Start receiving audio");
+	await call.startReceivingAudio();
+	console.log("Start sending audio");
+	await call.startSendingAudio();
+	console.log("connection should be up");
 }
 
 async function getNuanceReplyForText(text) {
